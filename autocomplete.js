@@ -27,6 +27,12 @@
  */
 
 /**
+ * @callback FetchCallback
+ * @param {Autocomplete} inst
+ * @returns {void}
+ */
+
+/**
  * @typedef Config
  * @property {Boolean} showAllSuggestions Show all suggestions even if they don't match
  * @property {Number} suggestionsThreshold Number of chars required to show suggestions
@@ -51,6 +57,7 @@
  * @property {Function} source A function that provides the list of items
  * @property {Boolean} hiddenInput Create an hidden input which stores the valueField
  * @property {String} hiddenValue Populate the initial hidden value. Mostly useful with liveServer.
+ * @property {String} clearControl Selector that will clear the input on click.
  * @property {String} datalist The id of the source datalist
  * @property {String} server Endpoint for data provider
  * @property {String} serverMethod HTTP request method for data provider, default is GET
@@ -65,6 +72,8 @@
  * @property {ItemCallback} onSelectItem Callback function to call on selection
  * @property {ServerCallback} onServerResponse Callback function to process server response. Must return a Promise
  * @property {ItemCallback} onChange Callback function to call on change-event. Returns currently selected item if any
+ * @property {FetchCallback} onBeforeFetch Callback function before fetch
+ * @property {FetchCallback} onAfterFetch Callback function after fetch
  */
 
 /**
@@ -94,6 +103,7 @@ const DEFAULTS = {
   source: null,
   hiddenInput: false,
   hiddenValue: "",
+  clearControl: "",
   datalist: "",
   server: "",
   serverMethod: "GET",
@@ -112,6 +122,8 @@ const DEFAULTS = {
     return response.json();
   },
   onChange: (item, inst) => {},
+  onBeforeFetch: (inst) => {},
+  onAfterFetch: (inst) => {},
 };
 
 // #endregion
@@ -269,10 +281,10 @@ class Autocomplete {
       window.addEventListener("resize", this);
     }
 
-    // Rebind handleEvent to make sure the scope will not change
-    this.handleEvent = (ev) => {
-      this._handleEvent(ev);
-    };
+    const clearControl = this._getClearControl();
+    if (clearControl) {
+      clearControl.addEventListener("click", this);
+    }
 
     // Add listeners (remove then on dispose()). See handleEvent.
     ["focus", "change", "blur", "input", "keydown"].forEach((type) => {
@@ -327,6 +339,11 @@ class Autocomplete {
       this._dropElement.removeEventListener(type, this);
     });
 
+    const clearControl = this._getClearControl();
+    if (clearControl) {
+      clearControl.removeEventListener("click", this);
+    }
+
     // only remove if there are no more active elements
     if (this._config.fixed && activeCounter <= 0) {
       document.removeEventListener("scroll", this, true);
@@ -338,20 +355,18 @@ class Autocomplete {
     INSTANCE_MAP.delete(this._searchInput);
   }
 
-  /**
-   * event-polyfill compat / handleEvent is expected on class
-   * @link https://github.com/lifaon74/events-polyfill/issues/10
-   * @param {Event} event
-   */
-  handleEvent(event) {
-    this._handleEvent(event);
+  _getClearControl() {
+    if (this._config.clearControl) {
+      return document.querySelector(this._config.clearControl);
+    }
   }
 
   /**
+   * @link https://github.com/lifaon74/events-polyfill/issues/10
    * @link https://gist.github.com/WebReflection/ec9f6687842aa385477c4afca625bbf4#handling-events
    * @param {Event} event
    */
-  _handleEvent(event) {
+  handleEvent = (event) => {
     // debounce scroll and resize
     const debounced = ["scroll", "resize"];
     if (debounced.includes(event.type)) {
@@ -362,7 +377,7 @@ class Autocomplete {
     } else {
       this[`on${event.type}`](event);
     }
-  }
+  };
 
   /**
    * @param {Config|Object} config
@@ -479,6 +494,12 @@ class Autocomplete {
   // #endregion
 
   // #region Events
+
+  onclick(e) {
+    if (e.target.matches(this._config.clearControl)) {
+      this.clear();
+    }
+  }
 
   oninput(e) {
     if (this._preventInput) {
@@ -617,6 +638,13 @@ class Autocomplete {
    */
   isDropdownVisible() {
     return this._dropElement.classList.contains(SHOW_CLASS);
+  }
+
+  clear() {
+    this._searchInput.value = "";
+    if (this._hiddenInput) {
+      this._hiddenInput.value = "";
+    }
   }
 
   // #endregion
@@ -778,10 +806,12 @@ class Autocomplete {
 
     if (this._config.highlightTyped) {
       const idx = normalize(label).indexOf(lookup);
-      label =
-        label.substring(0, idx) +
-        `<mark class="${this._config.highlightClass}">${label.substring(idx, idx + lookup.length)}</mark>` +
-        label.substring(idx + lookup.length, label.length);
+      if(idx !== -1){
+        label =
+          label.substring(0, idx) +
+          `<mark class="${this._config.highlightClass}">${label.substring(idx, idx + lookup.length)}</mark>` +
+          label.substring(idx + lookup.length, label.length);
+      }
     }
 
     label = this._config.onRenderItem(item, label, this);
@@ -1161,6 +1191,8 @@ class Autocomplete {
     }
 
     this._searchInput.classList.add(LOADING_CLASS);
+    this._config.onBeforeFetch(this);
+
     fetch(url, fetchOptions)
       .then((r) => this._config.onServerResponse(r, this))
       .then((suggestions) => {
@@ -1181,6 +1213,7 @@ class Autocomplete {
       })
       .finally((e) => {
         this._searchInput.classList.remove(LOADING_CLASS);
+        this._config.onAfterFetch(this);
       });
   }
 
